@@ -29,37 +29,33 @@ import (
 )
 
 func init() {
-	mb.Registry.MustAddMetricSet("mongodb", "collstats", New,
-		mb.WithHostParser(mongodb.ParseURL),
-		mb.DefaultMetricSet(),
-	)
+	mb.Registry.MustAddMetricSet("mongodb", "collstats", New, mb.DefaultMetricSet())
 }
 
-// Metricset type defines all fields of the Metricset
+// MetricSet type defines all fields of the MetricSet
 // As a minimum it must inherit the mb.BaseMetricSet fields, but can be extended with
 // additional entries. These variables can be used to persist data or configuration between
 // multiple fetch calls.
-type Metricset struct {
-	*mongodb.Metricset
+type MetricSet struct {
+	*mongodb.MetricSet
 }
 
-// New creates a new instance of the Metricset
+// New creates a new instance of the MetricSet
 // Part of new is also setting up the configuration by processing additional
 // configuration entries if needed.
 func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
-	ms, err := mongodb.NewMetricset(base)
+	ms, err := mongodb.NewMetricSet(base)
 	if err != nil {
-		return nil, fmt.Errorf("could not create mongodb metricset: %w", err)
+		return nil, err
 	}
-
-	return &Metricset{ms}, nil
+	return &MetricSet{ms}, nil
 }
 
 // Fetch methods implements the data gathering and data conversion to the right
 // format. It publishes the event which is then forwarded to the output. In case
 // of an error set the Error field of mb.Event or simply call report.Error().
-func (m *Metricset) Fetch(reporter mb.ReporterV2) error {
-	client, err := mongodb.NewClient(m.Metricset.Config, m.Module().Config().Timeout, 0)
+func (m *MetricSet) Fetch(reporter mb.ReporterV2) error {
+	client, err := mongodb.NewClient(m.ClientOptions)
 	if err != nil {
 		return fmt.Errorf("could not create mongodb client: %w", err)
 	}
@@ -112,9 +108,7 @@ func (m *Metricset) Fetch(reporter mb.ReporterV2) error {
 			continue
 		}
 
-		reporter.Event(mb.Event{
-			MetricSetFields: event,
-		})
+		reporter.Event(mb.Event{MetricSetFields: event})
 	}
 
 	return nil

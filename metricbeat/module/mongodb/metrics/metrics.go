@@ -29,10 +29,7 @@ import (
 )
 
 func init() {
-	mb.Registry.MustAddMetricSet("mongodb", "metrics", New,
-		mb.WithHostParser(mongodb.ParseURL),
-		mb.DefaultMetricSet(),
-	)
+	mb.Registry.MustAddMetricSet("mongodb", "metrics", New, mb.DefaultMetricSet())
 }
 
 // MetricSet type defines all fields of the MetricSet
@@ -40,14 +37,14 @@ func init() {
 // additional entries. These variables can be used to persist data or configuration between
 // multiple fetch calls.
 type MetricSet struct {
-	*mongodb.Metricset
+	*mongodb.MetricSet
 }
 
 // New creates a new instance of the MetricSet
 // Part of new is also setting up the configuration by processing additional
 // configuration entries if needed.
 func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
-	ms, err := mongodb.NewMetricset(base)
+	ms, err := mongodb.NewMetricSet(base)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +55,7 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 // format. It publishes the event which is then forwarded to the output. In case
 // of an error set the Error field of mb.Event or simply call report.Error().
 func (m *MetricSet) Fetch(reporter mb.ReporterV2) error {
-	client, err := mongodb.NewClient(m.Metricset.Config, m.Module().Config().Timeout, 0)
+	client, err := mongodb.NewClient(m.ClientOptions)
 	if err != nil {
 		return fmt.Errorf("could not create mongodb client: %w", err)
 	}

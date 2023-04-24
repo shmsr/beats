@@ -20,16 +20,13 @@ package mongodb
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strings"
-	"time"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 
 	"github.com/elastic/beats/v7/metricbeat/mb"
-	"github.com/elastic/beats/v7/metricbeat/mb/parse"
 
 	"github.com/elastic/elastic-agent-libs/transport/tlscommon"
 )
@@ -59,9 +56,10 @@ type ModuleConfig struct {
 	} `config:"credentials"`
 }
 
-type Metricset struct {
+type MetricSet struct {
 	mb.BaseMetricSet
-	Config ModuleConfig
+	Config        ModuleConfig
+	ClientOptions *options.ClientOptions
 }
 
 type module struct {
@@ -74,72 +72,17 @@ func NewModule(base mb.BaseModule) (mb.Module, error) {
 	return &module{base}, nil
 }
 
-func NewMetricset(base mb.BaseMetricSet) (*Metricset, error) {
+func NewMetricSet(base mb.BaseMetricSet) (*MetricSet, error) {
 	// Validate that at least one host has been specified.
 	config := ModuleConfig{}
 	if err := base.Module().UnpackConfig(&config); err != nil {
 		return nil, fmt.Errorf("could not read config: %w", err)
 	}
 
-	return &Metricset{Config: config, BaseMetricSet: base}, nil
-}
-
-// ParseURL parses valid MongoDB URL strings into an mb.HostData instance
-func ParseURL(module mb.Module, host string) (mb.HostData, error) {
-	c := struct {
-		Username    string `config:"username"`
-		Password    string `config:"password"`
-		Credentials struct {
-			AuthMechanism           string            `config:"auth_mechanism"`
-			AuthMechanismProperties map[string]string `config:"auth_mechanism_properties"`
-			AuthSource              string            `config:"auth_source"`
-			PasswordSet             bool              `config:"password_set"`
-		} `config:"credentials"`
-	}{}
-	if err := module.UnpackConfig(&c); err != nil {
-		return mb.HostData{}, err
-	}
-
-	if parts := strings.SplitN(host, "://", 2); len(parts) != 2 {
-		// Add scheme.
-		host = fmt.Sprintf("mongodb://%s", host)
-	}
-
-	// This doesn't use URLHostParserBuilder because MongoDB URLs can contain
-	// multiple hosts separated by commas (mongodb://host1,host2,host3?options).
-	u, err := url.Parse(host)
-	if err != nil {
-		return mb.HostData{}, fmt.Errorf("error parsing URL: %w", err)
-	}
-
-	parse.SetURLUser(u, c.Username, c.Password)
-
-	clientOptions := options.Client()
-	clientOptions.Auth = &options.Credential{
-		AuthMechanism:           c.Credentials.AuthMechanism,
-		AuthMechanismProperties: c.Credentials.AuthMechanismProperties,
-		AuthSource:              c.Credentials.AuthSource,
-		PasswordSet:             c.Credentials.PasswordSet,
-		Username:                c.Username,
-		Password:                c.Password,
-	}
-
-	clientOptions.ApplyURI(host)
-
-	// https://docs.mongodb.com/manual/reference/connection-string/
-	_, err = url.Parse(clientOptions.GetURI())
-	if err != nil {
-		return mb.HostData{}, fmt.Errorf("error parsing URL: %w", err)
-	}
-
-	return parse.NewHostDataFromURL(u), nil
-}
-
-func NewClient(config ModuleConfig, timeout time.Duration, mode readpref.Mode) (*mongo.Client, error) {
 	clientOptions := options.Client()
 
-	// options.Credentials must be nil for the driver to work properly if no auth is provided. Zero values breaks
-	// the connnection
+	// options.Credentials must be nil for the driver to work properly if no auth is provided.
+	// Zero values breaks the connnection.
 	if config.Username != "" && config.Password != "" {
 		clientOptions.Auth = &options.Credential{
 			AuthMechanism: config.Credentials.AuthMechanism,
@@ -155,17 +98,6 @@ func NewClient(config ModuleConfig, timeout time.Duration, mode readpref.Mode) (
 		}
 	}
 
-	if mode == 0 {
-		mode = readpref.NearestMode
-	}
-
-	readPreference, err := readpref.New(mode)
-	if err != nil {
-		return nil, err
-	}
-	clientOptions.SetReadPreference(readPreference)
-	clientOptions.SetConnectTimeout(timeout)
-
 	if config.TLS.IsEnabled() {
 		tlsConfig, err := tlscommon.LoadTLSConfig(config.TLS)
 		if err != nil {
@@ -175,13 +107,42 @@ func NewClient(config ModuleConfig, timeout time.Duration, mode readpref.Mode) (
 		clientOptions.SetTLSConfig(tlsConfig.ToConfig())
 	}
 
-	client, err := mongo.NewClient(clientOptions)
+	host := base.Host()
+	if parts := strings.SplitN(host, "://", 2); len(parts) != 2 {
+		host = "mongodb://" + host // add scheme
+	}
+	if err := clientOptions.ApplyURI(host).Validate(); err != nil {
+		return nil, fmt.Errorf("URL validation error: %w", err)
+	}
+
+	readPreference, err := readpref.New(readpref.PrimaryMode)
+	if err != nil {
+		return nil, err
+	}
+
+	clientOptions.SetReadPreference(readPreference)
+
+	// TODO(SS): Decide a better timeout? Currently, mb.DefaultModuleConfig().Timeout
+	// will make the client use no timeout. If we do not call this method, then by default,
+	// it is set to 30s.
+	clientOptions.SetConnectTimeout(mb.DefaultModuleConfig().Timeout)
+
+	if err := clientOptions.Validate(); err != nil {
+		return nil, fmt.Errorf("client options validation failed: %w", err)
+	}
+
+	return &MetricSet{Config: config, ClientOptions: clientOptions, BaseMetricSet: base}, nil
+}
+
+func NewClient(opts *options.ClientOptions) (*mongo.Client, error) {
+	client, err := mongo.NewClient(opts)
 	if err != nil {
 		return nil, fmt.Errorf("could not create mongodb client: %w", err)
 	}
 
 	if err = client.Connect(context.Background()); err != nil {
-		return client, fmt.Errorf("could not connect to mongodb: %w", err)
+		return nil, fmt.Errorf("could not connect to mongodb: %w", err)
 	}
+
 	return client, nil
 }

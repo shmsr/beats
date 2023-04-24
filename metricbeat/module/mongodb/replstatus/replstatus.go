@@ -21,15 +21,12 @@ import (
 	"context"
 	"fmt"
 
-	"go.mongodb.org/mongo-driver/mongo/readpref"
-
 	"github.com/elastic/beats/v7/metricbeat/mb"
 	"github.com/elastic/beats/v7/metricbeat/module/mongodb"
 )
 
 func init() {
-	mb.Registry.MustAddMetricSet("mongodb", "replstatus", New,
-		mb.WithHostParser(mongodb.ParseURL))
+	mb.Registry.MustAddMetricSet("mongodb", "replstatus", New)
 }
 
 // MetricSet type defines all fields of the MetricSet
@@ -37,14 +34,14 @@ func init() {
 // additional entries. These variables can be used to persist data or configuration between
 // multiple fetch calls.
 type MetricSet struct {
-	*mongodb.Metricset
+	*mongodb.MetricSet
 }
 
 // New creates a new instance of the MetricSet
 // Part of new is also setting up the configuration by processing additional
 // configuration entries if needed.
 func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
-	ms, err := mongodb.NewMetricset(base)
+	ms, err := mongodb.NewMetricSet(base)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +52,7 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 // format. It publishes the event which is then forwarded to the output. In case
 // of an error set the Error field of mb.Event or simply call report.Error().
 func (m *MetricSet) Fetch(reporter mb.ReporterV2) error {
-	client, err := mongodb.NewClient(m.Metricset.Config, m.Module().Config().Timeout, readpref.PrimaryMode)
+	client, err := mongodb.NewClient(m.ClientOptions)
 	if err != nil {
 		return fmt.Errorf("could not create mongodb client: %w", err)
 	}
